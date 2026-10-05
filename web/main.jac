@@ -1,7 +1,10 @@
-import "../core/site/styles/global.css";
-import "../core/site/styles/site.css";
-import "../core/site/styles/brand.css";
+import "./styles.css";
+import from .MosaicBackground { MosaicBackground }
+import from .PlannerPage { PlannerPage }
 
-def:pub app(children: any) -> JsxElement {
-    return <>{children}</>;
+def:pub app -> JsxElement {
+    return <>
+        <MosaicBackground/>
+        <PlannerPage/>
+    </>;
 }
