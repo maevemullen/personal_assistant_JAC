@@ -1,6 +1,6 @@
 # Planner
 
-**Maeve Mullen** · UMID: `TODO-UMID`
+**Maeve Mullen** · UMID: `49762477`
 
 A personal planner for coursework deadlines and a daily task list, written
 entirely in [Jac](https://www.jaseci.org/). One server holds all your tasks;
