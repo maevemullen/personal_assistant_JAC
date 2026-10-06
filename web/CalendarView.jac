@@ -3,6 +3,7 @@
 import from core.planner { Task }
 import from .TaskList {
     DayGroup,
+    EmptyState,
     iso_of,
     parse_day,
     local_iso,
@@ -52,12 +53,13 @@ def:pub DayCell(
     onPick: Callable[[str], None]
 ) -> JsxElement {
     open_count = len([t for t in tasks if t.status != "done"]);
-    classes = "cal-cell" + ("" if inMonth else " outside") + (
+    late = open_count > 0 and day < local_iso(0);
+    classes = "cal-cell" + ("" if inMonth else " outside") + (" overdue" if late else "") + (
         " today" if day == local_iso(0) else ""
     ) + (" selected" if selected else "");
     label = pretty_date(day) + (
         (", " + str(len(tasks)) + (" task" if len(tasks) == 1 else " tasks")) if len(tasks) > 0 else ""
-    );
+    ) + (", overdue" if late else "");
     <button
         type="button"
         className={classes}
@@ -90,7 +92,8 @@ def:pub CalendarView(
     tasks: list[Task],
     busyId: str,
     onToggle: Callable[[Task], None],
-    onDelete: Callable[[Task], None]
+    onDelete: Callable[[Task], None],
+    onEdit: Callable[[Task], None]
 ) -> JsxElement {
     has month: str = shift_month(local_iso(0), 0),
         selected: str = local_iso(0);
@@ -147,8 +150,12 @@ def:pub CalendarView(
                 busyId={busyId}
                 onToggle={onToggle}
                 onDelete={onDelete}
+                onEdit={onEdit}
             />) if len(picked) > 0 else (
-                <p className="empty">{"Nothing due " + pretty_date(selected) + "."}</p>
+                <EmptyState
+                    title="Nothing due."
+                    note={pretty_date(selected) + " is clear. Pick another day, or add a task above."}
+                />
             )}
         </div>
     </section>

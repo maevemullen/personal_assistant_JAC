@@ -15,6 +15,18 @@ glob EXIT_OK: int = 0,
      EXIT_TIMEOUT: int = 4,
      EXIT_REJECTED: int = 5;
 
+glob PRIORITY_RANK: dict[str, int] = {"high": 0, "medium": 1, "low": 2};
+
+"""Words in a failed call's detail that mean nothing answered at that address
+(the bridge reports a refused connection after its retries as a plain failure)."""
+glob UNREACHABLE_HINTS: list[str] = [
+    "Connect call failed",
+    "Connection refused",
+    "Errno 61",
+    "Errno 111",
+    "Cannot connect"
+];
+
 glob DEFAULT_SERVER: str = "http://localhost:8001",
      DEFAULT_ROUTE: str = "/api/planner",
      START_HINT: str = "hint: start the server first with `jac run` (in another terminal)";
@@ -61,6 +73,18 @@ def to_line(t: TaskView) -> TaskLine {
     );
 }
 
+"""The order `list` numbers tasks in: due date, then priority, then oldest first.
+Unlike the server's order it ignores whether a task is done, so completing a
+task never renumbers the list and `done N --undo` reopens the same task."""
+def cli_order(tasks: list[TaskView]) -> list[TaskView] {
+    return sorted(
+        tasks,
+        key=lambda (t: TaskView) {
+            (t.due, PRIORITY_RANK.get(t.priority, 1), t.created_at, t.title);
+        }
+    );
+}
+
 """Prefix a rendered task with its 1-based number from `list`."""
 def numbered(n: int, text: str) -> str {
     return (str(n) + ".").ljust(4) + text.replace("\n", "\n    ");
@@ -68,7 +92,8 @@ def numbered(n: int, text: str) -> str {
 
 def explain_bridge_error(e: BridgeError) -> int {
     detail = " (" + e.detail + ")" if e.detail else "";
-    if isinstance(e, BridgeUnavailable) {
+    unreachable = any([hint in (e.detail or "") for hint in UNREACHABLE_HINTS]);
+    if isinstance(e, BridgeUnavailable) or unreachable {
         warn("planner: the server is not reachable" + detail);
         warn(START_HINT);
         return EXIT_UNAVAILABLE;
@@ -118,7 +143,7 @@ async def run_add(
 async def run_list -> int {
     use_default_server();
     try {
-        tasks = await list_task_views();
+        tasks = cli_order(await list_task_views());
         if not tasks {
             print("no tasks yet; add one: jac run cli -- add \"Read chapter 4\"");
             return EXIT_OK;
@@ -136,7 +161,7 @@ async def run_list -> int {
 async def run_done(number: int, done: bool) -> int {
     use_default_server();
     try {
-        tasks = await list_task_views();
+        tasks = cli_order(await list_task_views());
         if number < 1 or number > len(tasks) {
             warn(
                 "planner done: no task number " + str(number)

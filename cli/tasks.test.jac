@@ -27,3 +27,29 @@ test "an unreachable server explains how to start it" {
 test "list lines are numbered so `done N` can refer to them" {
     assert numbered(3, "[ ] Lab 2\n      x") == "3.  [ ] Lab 2\n          x";
 }
+
+test "a refused connection reported as a plain failure still says start the server" {
+    buf = io.StringIO();
+    with redirect_stderr(buf) {
+        code = explain_bridge_error(
+            BridgeError(
+                app="planner",
+                name="list_task_views",
+                detail="sv-to-sv RPC 'planner.list_task_views' failed after 3 attempts: "
+                    + "localhost:8999: [Errno 61] Connect call failed ('127.0.0.1', 8999)"
+            )
+        );
+    }
+    assert code == EXIT_UNAVAILABLE;
+    assert START_HINT in buf.getvalue();
+}
+
+test "numbering ignores done, so completing a task never renumbers the list" {
+    a = TaskView(id="a", title="A", due="2026-10-06", priority="low", created_at="1");
+    b = TaskView(id="b", title="B", due="2026-10-06", priority="high", status="done", created_at="2");
+    c = TaskView(id="c", title="C", due="2026-10-06", priority="medium", created_at="3");
+    d = TaskView(id="d", title="D", due="2026-10-05", priority="low", created_at="4");
+    assert [t.id for t in cli_order([a, b, c, d])] == ["d", "b", "c", "a"];
+    b.status = "todo";
+    assert [t.id for t in cli_order([c, a, d, b])] == ["d", "b", "c", "a"];
+}

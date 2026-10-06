@@ -129,17 +129,56 @@ def:pub group_by_day(tasks: list[Task]) -> list[dict[str, any]] {
     return groups;
 }
 
+"""Whole days `iso` is in the past; 0 for today and later."""
+def:pub days_late(iso: str) -> int {
+    today = local_iso(0);
+    if iso >= today {
+        return 0;
+    }
+    gap = parse_day(today).getTime() - parse_day(iso).getTime();
+    return int(gap / 86400000 + 0.5);
+}
+
+glob QUICK_NOTES: list[str] = [
+    "Quick win: knock it out now.",
+    "Under half an hour. Start it now.",
+    "Small one. Clear it before the big ones.",
+    "Twenty minutes and it's off your list.",
+    "Do this one first. Momentum helps."
+];
+
+"""A nudge for a short task, picked from the title so it stays put between renders."""
+def:pub quick_note(title: str) -> str {
+    return QUICK_NOTES[len(title) % len(QUICK_NOTES)];
+}
+
+"""The shared empty state: a printer's ornament, a short headline and a note."""
+def:pub EmptyState(title: str, note: str) -> JsxElement {
+    <div className="empty" role="status">
+        <span className="empty-mark" aria-hidden="true">❦</span>
+        <p className="empty-title">{title}</p>
+        <p className="empty-note">{note}</p>
+    </div>
+}
+
 def:pub TaskRow(
     task: Task,
     busy: bool,
     onToggle: Callable[[Task], None],
     onDelete: Callable[[Task], None],
+    onEdit: Callable[[Task], None],
     showDue: bool = False
 ) -> JsxElement {
     has confirming: bool = False;
 
     done = task.status == "done";
-    <li className={"task done" if done else "task"}>
+    late = 0 if done else days_late(task.due);
+    soon = "" if done else (
+        " due-today" if task.due == local_iso(0) else (
+            " due-tomorrow" if task.due == local_iso(1) else ""
+        )
+    );
+    <li className={"task" + (" done" if done else "") + (" overdue" if late > 0 else "") + soon}>
         <button
             type="button"
             className="check"
@@ -151,10 +190,19 @@ def:pub TaskRow(
             {"✓" if done else ""}
         </button>
         <div className="task-body">
-            <span className="task-title">{task.title}</span>
+            <span className="task-headline">
+                <span className="task-title">{task.title}</span>
+                {(<span className="quick-note">{quick_note(task.title)}</span>)
+                    if task.duration == "<30 min" and not done else ""}
+            </span>
             <span className="task-tags">
                 {(<span className="tag done-on">{"done " + short_date(done_day(task))}</span>)
                     if done else ""}
+                {(<span className="tag late">
+                    {str(late) + (" day late" if late == 1 else " days late")}
+                </span>) if late > 0 else ""}
+                {(<span className="tag doing">in progress</span>)
+                    if task.status == "doing" else ""}
                 {(<span className="tag">{"due " + short_date(task.due)}</span>)
                     if showDue else ""}
                 <span className={"tag prio-" + task.priority}>
@@ -183,6 +231,26 @@ def:pub TaskRow(
                 Cancel
             </button>
         </div>) if confirming else (
+            <div className="row-actions">
+            <button
+                type="button"
+                className="icon-btn edit"
+                aria-label={"Edit task: " + task.title}
+                title="Edit task"
+                disabled={busy}
+                onClick={lambda { onEdit(task); }}
+            >
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                    <path
+                        d="M4 20h4L19 9l-4-4L4 16v4zM14 6l4 4"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                    />
+                </svg>
+            </button>
             <button
                 type="button"
                 className="icon-btn"
@@ -202,6 +270,7 @@ def:pub TaskRow(
                     />
                 </svg>
             </button>
+            </div>
         )}
     </li>
 }
@@ -211,7 +280,8 @@ def:pub DayGroup(
     tasks: list[Task],
     busyId: str,
     onToggle: Callable[[Task], None],
-    onDelete: Callable[[Task], None]
+    onDelete: Callable[[Task], None],
+    onEdit: Callable[[Task], None]
 ) -> JsxElement {
     today = local_iso(0);
     has_open = len([t for t in tasks if t.status != "done"]) > 0;
@@ -220,7 +290,7 @@ def:pub DayGroup(
             "Overdue" if due < today and has_open else ""
         )
     );
-    <section className="day">
+    <section className={"day" + (" day-overdue" if badge == "Overdue" else "")}>
         <h3 className="day-heading">
             <span>{pretty_date(due)}</span>
             {(<span className={"badge badge-" + badge.lower()}>{badge}</span>)
@@ -234,6 +304,7 @@ def:pub DayGroup(
                     busy={busyId == jid(t)}
                     onToggle={onToggle}
                     onDelete={onDelete}
+                    onEdit={onEdit}
                 /> for t in tasks
             ]}
         </ul>
@@ -247,7 +318,8 @@ def:pub CategoryGroup(
     tasks: list[Task],
     busyId: str,
     onToggle: Callable[[Task], None],
-    onDelete: Callable[[Task], None]
+    onDelete: Callable[[Task], None],
+    onEdit: Callable[[Task], None]
 ) -> JsxElement {
     <section className="day">
         <h3 className="day-heading">
@@ -264,6 +336,7 @@ def:pub CategoryGroup(
                     busy={busyId == jid(t)}
                     onToggle={onToggle}
                     onDelete={onDelete}
+                    onEdit={onEdit}
                     showDue={True}
                 /> for t in tasks
             ]}
@@ -276,7 +349,8 @@ def:pub ListView(
     tasks: list[Task],
     busyId: str,
     onToggle: Callable[[Task], None],
-    onDelete: Callable[[Task], None]
+    onDelete: Callable[[Task], None],
+    onEdit: Callable[[Task], None]
 ) -> JsxElement {
     has grouping: str = "date";
 
@@ -294,7 +368,10 @@ def:pub ListView(
                 </button> for g in GROUPINGS
             ]}
         </div>
-        {(<p className="empty">No tasks yet.</p>) if len(tasks) == 0 else (
+        {(<EmptyState
+            title="A clean slate."
+            note="Nothing on the docket. Add a task above and it will be filed here."
+        />) if len(tasks) == 0 else (
             (<div className="days">
                 {[
                     <CategoryGroup
@@ -304,6 +381,7 @@ def:pub ListView(
                         busyId={busyId}
                         onToggle={onToggle}
                         onDelete={onDelete}
+                        onEdit={onEdit}
                     /> for g in group_by_category(tasks)
                 ]}
             </div>) if grouping == "category" else (
@@ -316,6 +394,7 @@ def:pub ListView(
                             busyId={busyId}
                             onToggle={onToggle}
                             onDelete={onDelete}
+                            onEdit={onEdit}
                         /> for g in group_by_day(tasks)
                     ]}
                 </div>

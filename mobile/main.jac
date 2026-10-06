@@ -1,89 +1,141 @@
-import from "@jac/mobui" {
-    View,
-    Text,
-    Pressable,
-    TextInput,
-    ScrollView,
-    StyleSheet
-}
+import from "@jac/mobui" { View, Text, Pressable, TextInput, ScrollView }
 import from "@jac/runtime" { BridgeError }
 import from core.planner { Task, AddResult, add_task, list_tasks, mark_complete }
+import from .theme { C, styles }
+import from .dates { local_iso, pretty_date, short_date, long_date, days_late }
 
-glob styles: any = StyleSheet.create(
-    {
-        "screen": {"flex": 1, "backgroundColor": "#f7f7f5"},
-        "body": {"padding": 20, "paddingTop": 56, "gap": 12},
-        "heading": {"fontSize": 28, "fontWeight": "bold", "color": "#1d1d1f"},
-        "row": {"flexDirection": "row", "gap": 8},
-        "input": {
-            "flex": 1,
-            "borderWidth": 1,
-            "borderColor": "#e2e2de",
-            "borderRadius": 8,
-            "paddingHorizontal": 12,
-            "paddingVertical": 10,
-            "backgroundColor": "#ffffff",
-            "fontSize": 16
-        },
-        "button": {
-            "backgroundColor": "#2f6fde",
-            "borderRadius": 8,
-            "paddingHorizontal": 16,
-            "justifyContent": "center"
-        },
-        "buttonText": {"color": "#ffffff", "fontSize": 16, "fontWeight": "bold"},
-        "error": {"color": "#c0392b", "fontSize": 14},
-        "empty": {"color": "#6b6b70", "fontSize": 15},
-        "card": {
-            "flexDirection": "row",
-            "alignItems": "center",
-            "backgroundColor": "#ffffff",
-            "borderWidth": 1,
-            "borderColor": "#e2e2de",
-            "borderRadius": 8,
-            "padding": 12,
-            "gap": 12
-        },
-        "cardDone": {"opacity": 0.55},
-        "cardBody": {"flex": 1, "gap": 2},
-        "check": {
-            "width": 28,
-            "height": 28,
-            "borderRadius": 14,
-            "borderWidth": 2,
-            "borderColor": "#8a8a90",
-            "alignItems": "center",
-            "justifyContent": "center"
-        },
-        "checkDone": {"backgroundColor": "#2f6fde", "borderColor": "#2f6fde"},
-        "checkMark": {"color": "#ffffff", "fontSize": 16, "fontWeight": "bold"},
-        "title": {"fontSize": 16, "fontWeight": "bold", "color": "#1d1d1f"},
-        "titleDone": {"textDecorationLine": "line-through", "color": "#6b6b70"},
-        "meta": {"fontSize": 13, "color": "#6b6b70"}
+"""Keep in sync with QUICK_NOTES in web/TaskList.jac."""
+glob QUICK_NOTES: list[str] = [
+    "Quick win: knock it out now.",
+    "Under half an hour. Start it now.",
+    "Small one. Clear it before the big ones.",
+    "Twenty minutes and it's off your list.",
+    "Do this one first. Momentum helps."
+];
+
+"""Split date-sorted tasks into one group per due date, keeping order."""
+def group_by_day(tasks: list[Task]) -> list[dict[str, any]] {
+    groups: list[dict[str, any]] = [];
+    for t in tasks {
+        if len(groups) == 0 or groups[len(groups) - 1]["due"] != t.due {
+            groups.append({"due": t.due, "tasks": []});
+        }
+        groups[len(groups) - 1]["tasks"].append(t);
     }
-);
+    return groups;
+}
 
-def:pub TaskCard(task: Task, onToggle: Callable[[Task], None]) -> JsxElement {
+def Tag(text: str, tone: any) -> JsxElement {
+    return <Text style={[styles.tag, tone] if tone else styles.tag}>{text}</Text>;
+}
+
+def Dot -> JsxElement {
+    return <Text style={styles.tagDot}>·</Text>;
+}
+
+def:pub TaskRow(task: Task, busy: bool, onToggle: Callable[[Task], None]) -> JsxElement {
     done = task.status == "done";
+    late = 0 if done else days_late(task.due);
+    highlight = None if done else (
+        styles.rowToday if task.due == local_iso(0) else (
+            styles.rowTomorrow if task.due == local_iso(1) else None
+        )
+    );
+    quick = task.duration == "<30 min" and not done;
+    lead = (
+        Tag("done " + short_date(task.completed_at[:10] or task.due), styles.tagDone)
+    ) if done else (
+        Tag(str(late) + (" day late" if late == 1 else " days late"), styles.tagAccent)
+    ) if late > 0 else None;
     return
         <Pressable
-            style={[styles.card, styles.cardDone] if done else styles.card}
+            style={lambda (state: any) {
+                return [styles.row, highlight, styles.rowPressed if state.pressed else None];
+            }}
+            disabled={busy}
             onPress={lambda { onToggle(task); }}
             accessibilityRole="checkbox"
-            accessibilityState={{"checked": done}}
+            accessibilityState={{"checked": done, "disabled": busy}}
+            accessibilityLabel={task.title + (
+                (", " + str(late) + (" day late" if late == 1 else " days late")) if late > 0 else ""
+            )}
         >
-            <View style={[styles.check, styles.checkDone] if done else styles.check}>
+            {(<View style={styles.lateBar}/>) if late > 0 else None}
+            <View
+                style={[styles.check, styles.checkDone] if done else (
+                    [styles.check, styles.checkLate] if late > 0 else styles.check
+                )}
+            >
                 <Text style={styles.checkMark}>{"✓" if done else ""}</Text>
             </View>
-            <View style={styles.cardBody}>
-                <Text style={[styles.title, styles.titleDone] if done else styles.title}>
+            <View style={styles.rowBody}>
+                <Text style={[styles.taskTitle, styles.taskTitleDone] if done else styles.taskTitle}>
                     {task.title}
                 </Text>
-                <Text style={styles.meta}>
-                    {"due " + task.due + " · " + task.priority + " priority"}
-                </Text>
+                {(<Text style={styles.note}>
+                    {"→ " + QUICK_NOTES[len(task.title) % len(QUICK_NOTES)]}
+                </Text>) if quick else None}
+                <View style={styles.tags}>
+                    {lead}
+                    {(<Dot/>) if lead else None}
+                    {Tag(
+                        task.priority + " priority",
+                        styles.tagAccent if task.priority == "high" else (
+                            styles.tagStrong if task.priority == "medium" else None
+                        )
+                    )}
+                    <Dot/>
+                    {Tag(task.duration, None)}
+                    {(<Dot/>) if task.category else None}
+                    {Tag(task.category, styles.tagStrong) if task.category else None}
+                </View>
             </View>
         </Pressable>;
+}
+
+def DayGroup(
+    due: str, tasks: list[Task], busyId: str, onToggle: Callable[[Task], None]
+) -> JsxElement {
+    today = local_iso(0);
+    has_open = len([t for t in tasks if t.status != "done"]) > 0;
+    badge = "Today" if due == today else (
+        "Tomorrow" if due == local_iso(1) else (
+            "Overdue" if due < today and has_open else ""
+        )
+    );
+    late = badge == "Overdue";
+    return
+        <View>
+            <View style={[styles.dayHeading, styles.dayHeadingLate] if late else styles.dayHeading}>
+                <Text style={[styles.dayTitle, styles.dayTitleLate] if late else styles.dayTitle}>
+                    {pretty_date(due)}
+                </Text>
+                {(<View
+                    style={[styles.badge, styles.badgeToday] if badge == "Today" else (
+                        [styles.badge, styles.badgeLate] if late else styles.badge
+                    )}
+                >
+                    <Text
+                        style={[styles.badgeText, styles.badgeTextOn] if badge != "Tomorrow" else styles.badgeText}
+                    >
+                        {badge}
+                    </Text>
+                </View>) if badge else None}
+            </View>
+            {[
+                <TaskRow key={jid(t)} task={t} busy={busyId == jid(t)} onToggle={onToggle}/>
+                for t in tasks
+            ]}
+        </View>;
+}
+
+def EmptyState(title: str, note: str) -> JsxElement {
+    return
+        <View style={styles.empty} accessibilityRole="text">
+            <Text style={styles.emptyMark}>❦</Text>
+            <Text style={styles.emptyTitle}>{title}</Text>
+            <Text style={styles.emptyNote}>{note}</Text>
+        </View>;
 }
 
 def:pub app -> JsxElement {
@@ -91,6 +143,7 @@ def:pub app -> JsxElement {
         title: str = "",
         error: str = "",
         saving: bool = False,
+        focused: bool = False,
         busyId: str = "";
 
     async def refresh {
@@ -141,24 +194,54 @@ def:pub app -> JsxElement {
 
     return
         <ScrollView style={styles.screen} contentContainerStyle={styles.body}>
-            <Text style={styles.heading}>Planner</Text>
-            <View style={styles.row}>
-                <TextInput
-                    style={styles.input}
-                    value={title}
-                    placeholder="Add a task for today"
-                    placeholderTextColor="#8a8a90"
-                    onChangeText={lambda (t: str) { title = t; }}
-                    onSubmitEditing={handle_add}
-                />
-                <Pressable style={styles.button} onPress={handle_add}>
-                    <Text style={styles.buttonText}>{"…" if saving else "Add"}</Text>
-                </Pressable>
+            <View style={styles.masthead}>
+                <Text style={styles.dateline}>{long_date(local_iso(0))}</Text>
+                <Text style={styles.title} accessibilityRole="header">The Planner</Text>
+                <Text style={styles.tagline}>{"Coursework, deadlines & the day’s work"}</Text>
+                <View style={styles.doubleRule}/>
             </View>
-            {(<Text style={styles.error}>{error}</Text>) if error else <View/>}
-            {(<Text style={styles.empty}>No tasks yet.</Text>) if len(tasks) == 0 else (
-                <View style={{"gap": 8}}>
-                    {[<TaskCard key={jid(t)} task={t} onToggle={handle_toggle}/> for t in tasks]}
+            <View>
+                <Text style={styles.fieldLabel}>Task due today</Text>
+                <View style={styles.addRow}>
+                    <TextInput
+                        style={[styles.input, styles.inputFocused] if focused else styles.input}
+                        value={title}
+                        placeholder="e.g. Read chapter 4"
+                        placeholderTextColor={C.inkSoft}
+                        accessibilityLabel="New task title"
+                        onChangeText={lambda (t: str) { title = t; }}
+                        onFocus={lambda { focused = True; }}
+                        onBlur={lambda { focused = False; }}
+                        onSubmitEditing={handle_add}
+                        returnKeyType="done"
+                    />
+                    <Pressable
+                        style={lambda (state: any) {
+                            return [styles.button, styles.buttonPressed if state.pressed else None];
+                        }}
+                        disabled={saving}
+                        onPress={handle_add}
+                        accessibilityRole="button"
+                    >
+                        <Text style={styles.buttonText}>{"Adding…" if saving else "Add task"}</Text>
+                    </Pressable>
+                </View>
+            </View>
+            {(<Text style={styles.error} accessibilityRole="alert">{error}</Text>) if error else None}
+            {(<EmptyState
+                title="A clean slate."
+                note="Nothing on the docket. Add a task above and it will be filed here."
+            />) if len(tasks) == 0 else (
+                <View style={styles.days}>
+                    {[
+                        <DayGroup
+                            key={g["due"]}
+                            due={g["due"]}
+                            tasks={g["tasks"]}
+                            busyId={busyId}
+                            onToggle={handle_toggle}
+                        /> for g in group_by_day(tasks)
+                    ]}
                 </View>
             )}
         </ScrollView>;

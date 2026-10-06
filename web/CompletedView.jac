@@ -3,6 +3,7 @@
 import from core.planner { Task }
 import from .TaskList {
     TaskRow,
+    EmptyState,
     done_day,
     local_iso,
     add_days,
@@ -46,7 +47,8 @@ def:pub CompletedView(
     tasks: list[Task],
     busyId: str,
     onToggle: Callable[[Task], None],
-    onDelete: Callable[[Task], None]
+    onDelete: Callable[[Task], None],
+    onEdit: Callable[[Task], None]
 ) -> JsxElement {
     has period: str = "week";
 
@@ -95,9 +97,10 @@ def:pub CompletedView(
                 </button> for p in PERIODS
             ]}
         </div>
-        {(<p className="empty">
-            Nothing completed yet. Tick off a task and it will show up here.
-        </p>) if len(finished) == 0 else (
+        {(<EmptyState
+            title="Nothing finished yet."
+            note="Tick off a task and it will be filed here, by week, month or year."
+        />) if len(finished) == 0 else (
             <div className="days">
                 {[
                     <section key={g["key"]} className="day">
@@ -118,6 +121,7 @@ def:pub CompletedView(
                                     busy={busyId == jid(t)}
                                     onToggle={onToggle}
                                     onDelete={onDelete}
+                                    onEdit={onEdit}
                                     showDue={True}
                                 /> for t in g["tasks"]
                             ]}
